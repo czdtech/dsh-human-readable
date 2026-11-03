@@ -25,7 +25,7 @@ window.__ModuleLoader__.load({
         rounds: '上下文轮数',
         roundsHint: '最多看最近几轮对话，0–20，默认 6。和下面的 token 上限以先到者为准。',
         tokens: '上下文 token 上限',
-        tokensHint: '最多带多少 token，默认 1500。和轮数上限以先到者为准。',
+        tokensHint: '最多带多少 token，默认 3000。和轮数上限以先到者为准。',
         shortcut: '快捷键',
         shortcutHint: '点一下右边的按钮，再按你想要的组合键（必须包含 Ctrl / Alt / Cmd）；按 Esc 取消。',
         shortcutRecording: '请按组合键…',
@@ -46,7 +46,7 @@ window.__ModuleLoader__.load({
         rounds: 'Context turns',
         roundsHint: 'At most this many recent turns, 0–20, default 6. Whichever limit is hit first wins.',
         tokens: 'Context token budget',
-        tokensHint: 'Token cap for the context, default 1500. Whichever limit is hit first wins.',
+        tokensHint: 'Token cap for the context, default 3000. Whichever limit is hit first wins.',
         shortcut: 'Shortcut',
         shortcutHint: 'Click the button, then press the combo you want (Ctrl, Alt, or Cmd required); Esc cancels.',
         shortcutRecording: 'Press keys…',
@@ -90,7 +90,8 @@ window.__ModuleLoader__.load({
 
     const SETTINGS_KEY = 'dsh-human-readable.settings.v1'
     const DEFAULT_ROUNDS = 6
-    const DEFAULT_CONTEXT_TOKENS = 1500
+    const DEFAULT_CONTEXT_TOKENS = 3000
+    const LEGACY_DEFAULT_CONTEXT_TOKENS = 1500
     const MIN_CONTEXT_TOKENS = 200
     const MAX_CONTEXT_TOKENS = 8000
     const DEFAULT_SHORTCUT = 'alt+h'
@@ -142,9 +143,14 @@ window.__ModuleLoader__.load({
         const rawRounds = Number(value.rounds)
         const rounds = Number.isFinite(rawRounds) ? Math.min(20, Math.max(0, Math.trunc(rawRounds))) : DEFAULT_ROUNDS
         const rawTokens = Number(value.contextTokens)
-        const contextTokens = Number.isFinite(rawTokens)
+        let contextTokens = Number.isFinite(rawTokens)
           ? Math.min(MAX_CONTEXT_TOKENS, Math.max(MIN_CONTEXT_TOKENS, Math.trunc(rawTokens)))
           : DEFAULT_CONTEXT_TOKENS
+        // 1500 was the old default; adopt the new one once unless it was edited afterwards.
+        if (value.migratedContextTokens !== true && contextTokens === LEGACY_DEFAULT_CONTEXT_TOKENS) {
+          contextTokens = DEFAULT_CONTEXT_TOKENS
+          writeSettings({ ...value, rounds, contextTokens, migratedContextTokens: true })
+        }
         const shortcut = typeof value.shortcut === 'string' ? value.shortcut : DEFAULT_SHORTCUT
         return { rounds, contextTokens, shortcut }
       } catch {

@@ -16,7 +16,7 @@ export const inject = ['llm', 'sessions', 'connection', 'webServer']
 
 const DEFAULT_ROUNDS = 6
 const MAX_ROUNDS = 20
-const DEFAULT_CONTEXT_TOKENS = 1500
+const DEFAULT_CONTEXT_TOKENS = 3000
 const MIN_CONTEXT_TOKENS = 200
 const MAX_CONTEXT_TOKENS = 8000
 const MAX_OUTPUT_TOKENS = 500
