@@ -1,0 +1,3 @@
+- insert:
+    - id: human-readable
+      name: '@local/dsh-human-readable'
