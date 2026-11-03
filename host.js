@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 给任何人讲清楚 (Human-Readable) — Host half.
  *
  * One HTTP route the composer button calls:
@@ -107,7 +107,8 @@ function recentTranscript(session, rounds, budget) {
   const lines = []
   let used = 0
   let taggedLatest = false
-  for (let index = picked.length - 1; index >= 0; index -= 1) {
+  const maxMessages = rounds * 2
+  for (let index = picked.length - 1; index >= 0 && lines.length < maxMessages; index -= 1) {
     const item = picked[index]
     let who = item.role === 'user' ? '用户' : '助手'
     if (!taggedLatest && item.role === 'assistant') {
