@@ -295,9 +295,13 @@ window.__ModuleLoader__.load({
       const [hover, setHover] = React.useState(false)
       const [error, setError] = React.useState('')
       const alive = React.useRef(true)
+      const inFlight = React.useRef(false)
       useLocale()
-      React.useEffect(() => () => {
-        alive.current = false
+      React.useEffect(() => {
+        alive.current = true
+        return () => {
+          alive.current = false
+        }
       }, [])
 
       React.useEffect(() => {
@@ -324,8 +328,8 @@ window.__ModuleLoader__.load({
           : `${text.label} · ${text.empty}`
 
       async function run() {
-        if (!canRun) return
-        const started = performance.now()
+        if (!canRun || inFlight.current) return
+        inFlight.current = true
         setBusy(true)
         setError('')
         const settings = readSettings()
@@ -340,6 +344,9 @@ window.__ModuleLoader__.load({
               contextTokens: settings.contextTokens,
             }),
           })
+          if (response.status === 401 || response.status === 403) {
+            throw new Error('登录状态失效，刷新页面后再试')
+          }
           if (!response.ok) throw new Error(`HTTP ${response.status}`)
           const reply = await response.json()
           if (!reply || reply.ok !== true) {
@@ -348,14 +355,12 @@ window.__ModuleLoader__.load({
           const next = reply.value && reply.value.text
           if (typeof next !== 'string' || next.trim() === '') throw new Error('empty rewrite')
           writeDraft(inputActions, next.trim())
-          if (typeof console !== 'undefined') {
-            console.log(`[human-readable] ${Math.round(performance.now() - started)}ms · ${reply.value.model ?? ''}`)
-          }
         } catch (failure) {
           if (!alive.current) return
           setError(failure instanceof Error ? failure.message : String(failure))
           if (typeof console !== 'undefined') console.error('[human-readable]', failure)
         } finally {
+          inFlight.current = false
           if (alive.current) setBusy(false)
         }
       }
@@ -365,6 +370,8 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         const onKeyDown = (event) => {
           if (shortcutRecording || event.defaultPrevented || !canRun) return
+          const active = document.activeElement
+          if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) return
           if (!matchesCombo(event, readSettings().shortcut)) return
           const now = Date.now()
           if (now - lastShortcutAt < 400) return
@@ -617,7 +624,7 @@ window.__ModuleLoader__.load({
                   name: 'settings.section',
                   id: 'human-readable',
                   order: 25,
-                  label: () => (isZh() ? STRINGS.zh.title : STRINGS.en.title),
+                  label: () => strings().title,
                 },
                 SettingsPage,
               ),

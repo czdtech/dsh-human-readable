@@ -19,7 +19,8 @@ const MAX_ROUNDS = 20
 const DEFAULT_CONTEXT_TOKENS = 3000
 const MIN_CONTEXT_TOKENS = 200
 const MAX_CONTEXT_TOKENS = 8000
-const MAX_OUTPUT_TOKENS = 500
+const MAX_OUTPUT_TOKENS = 800
+const MAX_BODY_BYTES = 1024 * 1024
 const DEADLINE_MS = 8000
 
 const SYSTEM_PROMPT = `你是一个「提示词澄清器」。用户会给你两部分内容：最近几轮对话的上下文，以及他此刻在输入框里写的一句话。
@@ -187,6 +188,7 @@ export function apply(ctx) {
     }, DEADLINE_MS)
     let text = ''
     let aborted = false
+    let truncated = false
     try {
       for await (const chunk of ctx.llm.stream({ ...request, signal: controller.signal })) {
         if (!chunk) continue
@@ -196,6 +198,7 @@ export function apply(ctx) {
             throw new Error((chunk.reason.failure && chunk.reason.failure.message) || 'model error')
           }
           if (chunk.reason.kind === 'aborted') aborted = true
+          if (chunk.reason.kind === 'max-tokens') truncated = true
         }
       }
     } finally {
@@ -210,6 +213,7 @@ export function apply(ctx) {
       if (aborted) throw new Error('生成被中止，没有拿到内容')
       throw new Error('模型没有返回内容')
     }
+    if (truncated) throw new Error('改写结果太长，被截断了；再点一次，或先把原文写短一点')
     return text
   }
 
@@ -237,7 +241,6 @@ export function apply(ctx) {
     }
 
     const text = (await collectText(request, signal)).trim()
-    if (text === '') throw new Error('模型没有返回内容')
     return {
       text,
       elapsedMs: Date.now() - startedAt,
@@ -250,7 +253,13 @@ export function apply(ctx) {
 
   async function readBody(request) {
     const chunks = []
-    for await (const chunk of request) chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk)
+    let size = 0
+    for await (const chunk of request) {
+      const buffer = typeof chunk === 'string' ? Buffer.from(chunk) : chunk
+      size += buffer.length
+      if (size > MAX_BODY_BYTES) throw new Error('request body too large')
+      chunks.push(buffer)
+    }
     return Buffer.concat(chunks).toString('utf8')
   }
 
