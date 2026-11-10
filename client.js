@@ -2,9 +2,9 @@
  * 给任何人讲清楚 (Human-Readable) — Client half.
  *
  * Adds one icon button to the composer. Clicking it sends the draft plus the
- * recent conversation window to this package's Host half and writes the result
- * back into the composer, replacing the draft in place. Visible text follows the
- * Host's active locale; the only preference is the context-turn count.
+ * session's full transcript to this package's Host half and writes the result
+ * back into the composer, replacing the draft in place. Visible text follows
+ * the Host's active locale; settings configure the shortcut.
  */
 
 window.__ModuleLoader__.load({
@@ -17,15 +17,15 @@ window.__ModuleLoader__.load({
       zh: {
         label: '给任何人讲清楚',
         empty: '先写点什么，再点这里',
+        noContext: '先发一条消息，让改写有上下文可参考',
+        unchangedNote: '草稿已经能独立看懂，未改动',
+        unchangedMissed: '没有生成改写，草稿已保留',
+        stale: '草稿已变化，这次结果没有写入；需要的话请再点一次',
         busy: '正在改写…',
-        failed: '没改成功：',
-        noWriter: '没有可用的写入接口',
+        changed: '改写期间草稿发生了变化：请检查插入的改写结果，再决定是否发送。',
+        insertFailed: '改写结果没有写入输入框，当前内容已保留。',
         title: '给任何人讲清楚',
-        desc: '点输入框右上角的按钮，把草稿改写成任何人都听得懂的版本。',
-        rounds: '上下文轮数',
-        roundsHint: '最多看最近几轮对话，0–20，默认 6。和下面的 token 上限以先到者为准。',
-        tokens: '上下文 token 上限',
-        tokensHint: '最多带多少 token，默认 3000。和轮数上限以先到者为准。',
+        desc: '结合对话把草稿改写成脱离上下文也能看懂、可以直接发送的版本；保持原意和语气，上下文里能查到的都补齐，查不到的保持你的原话，不编造、不留空。',
         shortcut: '快捷键',
         shortcutHint: '点一下右边的按钮，再按你想要的组合键（必须包含 Ctrl / Alt / Cmd）；按 Esc 取消。',
         shortcutRecording: '请按组合键…',
@@ -38,15 +38,15 @@ window.__ModuleLoader__.load({
       en: {
         label: 'Human-Readable',
         empty: 'Write something first',
+        noContext: 'Send a message first so the rewrite has context',
+        unchangedNote: 'Your draft already stands alone; nothing changed.',
+        unchangedMissed: 'No rewrite was produced; your draft is preserved.',
+        stale: 'Your draft changed, so this result was not written. Run it again if you want it.',
         busy: 'Rewriting…',
-        failed: 'Failed: ',
-        noWriter: 'No draft writer available',
+        changed: 'Your draft changed while rewriting. Review the inserted rewrite before sending.',
+        insertFailed: 'The rewrite was not written into the composer; your current text is preserved.',
         title: 'Human-Readable',
-        desc: 'The composer button rewrites your draft into language anyone can follow.',
-        rounds: 'Context turns',
-        roundsHint: 'At most this many recent turns, 0–20, default 6. Whichever limit is hit first wins.',
-        tokens: 'Context token budget',
-        tokensHint: 'Token cap for the context, default 3000. Whichever limit is hit first wins.',
+        desc: 'Rewrite your draft so it reads clearly without this conversation and can be sent as-is; meaning and tone preserved, everything the conversation answers is filled in, what it cannot answer keeps your own wording, nothing invented, nothing left blank.',
         shortcut: 'Shortcut',
         shortcutHint: 'Click the button, then press the combo you want (Ctrl, Alt, or Cmd required); Esc cancels.',
         shortcutRecording: 'Press keys…',
@@ -89,11 +89,6 @@ window.__ModuleLoader__.load({
     }
 
     const SETTINGS_KEY = 'dsh-human-readable.settings.v1'
-    const DEFAULT_ROUNDS = 6
-    const DEFAULT_CONTEXT_TOKENS = 3000
-    const LEGACY_DEFAULT_CONTEXT_TOKENS = 1500
-    const MIN_CONTEXT_TOKENS = 200
-    const MAX_CONTEXT_TOKENS = 8000
     const DEFAULT_SHORTCUT = 'alt+h'
 
     const MODIFIER_KEYS = new Set(['control', 'alt', 'shift', 'meta'])
@@ -140,21 +135,14 @@ window.__ModuleLoader__.load({
     function readSettings() {
       try {
         const value = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') || {}
-        const rawRounds = Number(value.rounds)
-        const rounds = Number.isFinite(rawRounds) ? Math.min(20, Math.max(0, Math.trunc(rawRounds))) : DEFAULT_ROUNDS
-        const rawTokens = Number(value.contextTokens)
-        let contextTokens = Number.isFinite(rawTokens)
-          ? Math.min(MAX_CONTEXT_TOKENS, Math.max(MIN_CONTEXT_TOKENS, Math.trunc(rawTokens)))
-          : DEFAULT_CONTEXT_TOKENS
-        // 1500 was the old default; adopt the new one once unless it was edited afterwards.
-        if (value.migratedContextTokens !== true && contextTokens === LEGACY_DEFAULT_CONTEXT_TOKENS) {
-          contextTokens = DEFAULT_CONTEXT_TOKENS
-          writeSettings({ ...value, rounds, contextTokens, migratedContextTokens: true })
-        }
         const shortcut = typeof value.shortcut === 'string' ? value.shortcut : DEFAULT_SHORTCUT
-        return { rounds, contextTokens, shortcut }
+        // Retired numeric controls must not survive in storage or affect requests.
+        if (['rounds', 'contextTokens', 'migratedContextTokens'].some((key) => Object.hasOwn(value, key))) {
+          writeSettings({ shortcut })
+        }
+        return { shortcut }
       } catch {
-        return { rounds: DEFAULT_ROUNDS, contextTokens: DEFAULT_CONTEXT_TOKENS, shortcut: DEFAULT_SHORTCUT }
+        return { shortcut: DEFAULT_SHORTCUT }
       }
     }
 
@@ -279,21 +267,24 @@ window.__ModuleLoader__.load({
       return ''
     }
 
-    /** Replace the whole draft; the exposed writer name differs across host builds. */
-    function writeDraft(actions, text) {
-      if (typeof actions?.setDraft === 'function') return actions.setDraft(text)
-      if (typeof actions?.setText === 'function') return actions.setText(text)
+    /** Insert a completed rewrite without replacing text entered after capture. */
+    function insertDraft(actions, text) {
       const insertion = typeof actions?.captureInsertion === 'function' ? actions.captureInsertion() : undefined
-      if (insertion && typeof actions?.insertText === 'function') return actions.insertText(text, insertion)
-      throw new Error(`${strings().noWriter}: ${Object.keys(actions ?? {}).join(',') || 'none'}`)
+      if (insertion && typeof actions?.insertText === 'function' && actions.insertText(text, insertion) !== false) return
+      throw new Error(strings().insertFailed)
     }
 
     function HumanReadableButton(props) {
-      const { useInput, inputActions, sessionId } = props
+      const { useInput, inputActions, sessionId, useSession } = props
       const draft = useInput(draftOf)
+      // A blank Session has no sent message, so there is no evidence to clarify
+      // against; the button stays disabled until the first prompt is accepted.
+      const blank = useSession((session) => session?.blank === true)
+      const draftRef = React.useRef(draft)
+      draftRef.current = draft
       const [busy, setBusy] = React.useState(false)
       const [hover, setHover] = React.useState(false)
-      const [error, setError] = React.useState('')
+      const [notice, setNotice] = React.useState(null)
       const alive = React.useRef(true)
       const inFlight = React.useRef(false)
       useLocale()
@@ -305,34 +296,37 @@ window.__ModuleLoader__.load({
       }, [])
 
       React.useEffect(() => {
-        if (error === '') return undefined
-        const close = () => setError('')
-        const timer = setTimeout(close, 4000)
+        if (!notice) return undefined
+        const close = () => setNotice(null)
+        const timer = setTimeout(close, notice.kind === 'error' ? 5000 : 3500)
         const options = { capture: true }
         document.addEventListener('pointerdown', close, options)
         return () => {
           clearTimeout(timer)
           document.removeEventListener('pointerdown', close, options)
         }
-      }, [error])
+      }, [notice])
 
       const text = strings()
-      const canRun = !busy && typeof draft === 'string' && draft.trim() !== ''
+      const emptyDraft = typeof draft !== 'string' || draft.trim() === ''
+      const canRun = !busy && !blank && !emptyDraft
       const shortcutLabel = formatCombo(readSettings().shortcut)
       const title = busy
         ? text.busy
-        : canRun
-          ? shortcutLabel === ''
-            ? text.label
-            : `${text.label} · ${shortcutLabel}`
-          : `${text.label} · ${text.empty}`
+        : emptyDraft
+          ? `${text.label} · ${text.empty}`
+          : blank
+            ? `${text.label} · ${text.noContext}`
+            : shortcutLabel === ''
+              ? text.label
+              : `${text.label} · ${shortcutLabel}`
 
       async function run() {
         if (!canRun || inFlight.current) return
         inFlight.current = true
         setBusy(true)
-        setError('')
-        const settings = readSettings()
+        setNotice(null)
+        const originalDraft = draft
         try {
           const response = await fetch('dsh-human-readable/rewrite', {
             method: 'POST',
@@ -340,8 +334,6 @@ window.__ModuleLoader__.load({
             body: JSON.stringify({
               sessionId: typeof sessionId === 'string' ? sessionId : '',
               draft,
-              rounds: settings.rounds,
-              contextTokens: settings.contextTokens,
             }),
           })
           if (response.status === 401 || response.status === 403) {
@@ -354,10 +346,46 @@ window.__ModuleLoader__.load({
           }
           const next = reply.value && reply.value.text
           if (typeof next !== 'string' || next.trim() === '') throw new Error('empty rewrite')
-          writeDraft(inputActions, next.trim())
+          if (!alive.current) return
+          const incoming = next.trim()
+          const value = reply.value || {}
+          if (typeof console !== 'undefined') {
+            console.info('[human-readable]', {
+              changed: incoming !== originalDraft.trim(),
+              model: value.model,
+              elapsedMs: value.elapsedMs,
+              hasContext: value.hasContext,
+            })
+          }
+          // A rewrite identical to the draft has nothing to write back, but the
+          // click must never look like a no-op: say what happened either way.
+          if (incoming === originalDraft.trim()) {
+            if (draftRef.current !== originalDraft) {
+              setNotice({ kind: 'info', text: text.stale })
+              return
+            }
+            const base = value.form === 'unchanged' ? text.unchangedNote : ''
+            setNotice({ kind: 'info', text: base === '' ? text.unchangedMissed : base })
+            return
+          }
+          if (draftRef.current === originalDraft) {
+            if (typeof inputActions?.setDraft === 'function') inputActions.setDraft(incoming)
+            else if (typeof inputActions?.setText === 'function') inputActions.setText(incoming)
+            else {
+              insertDraft(inputActions, incoming)
+              return
+            }
+            setTimeout(() => {
+              if (!alive.current) return
+              if (draftRef.current === originalDraft) setNotice({ kind: 'error', text: text.insertFailed })
+            }, 800)
+            return
+          }
+          insertDraft(inputActions, incoming)
+          setNotice({ kind: 'info', text: text.changed })
         } catch (failure) {
           if (!alive.current) return
-          setError(failure instanceof Error ? failure.message : String(failure))
+          setNotice({ kind: 'error', text: failure instanceof Error ? failure.message : String(failure) })
           if (typeof console !== 'undefined') console.error('[human-readable]', failure)
         } finally {
           inFlight.current = false
@@ -410,13 +438,18 @@ window.__ModuleLoader__.load({
             },
             busy ? h(Spinner) : h(Icon),
           ),
-          error === ''
+          notice === null
             ? null
             : h(
                 'div',
                 { key: 'bubble', style: styles.bubble, role: 'alert' },
-                h('span', { style: styles.dot }),
-                h('span', { style: styles.bubbleText }, error),
+                h('span', {
+                  style:
+                    notice.kind === 'error'
+                      ? styles.dot
+                      : { ...styles.dot, background: 'var(--dsw-alias-label-secondary)' },
+                }),
+                h('span', { style: styles.bubbleText }, notice.text),
               ),
         ),
       )
@@ -488,47 +521,6 @@ window.__ModuleLoader__.load({
         h('div', { key: 'head' }, [
           h('div', { style: pageStyles.title }, text.title),
           h('div', { style: pageStyles.desc }, text.desc),
-        ]),
-        h('div', { key: 'rounds', style: pageStyles.row }, [
-          h('div', { key: 'label' }, [
-            h('div', { style: pageStyles.label }, text.rounds),
-            h('div', { style: pageStyles.hint }, text.roundsHint),
-          ]),
-          h('input', {
-            key: 'control',
-            type: 'number',
-            min: 0,
-            max: 20,
-            step: 1,
-            value: String(settings.rounds),
-            style: { ...pageStyles.input, width: 96 },
-            onChange: (event) => {
-              const next = Math.min(20, Math.max(0, Math.trunc(Number(event.target.value) || 0)))
-              update({ rounds: next })
-            },
-          }),
-        ]),
-        h('div', { key: 'tokens', style: pageStyles.row }, [
-          h('div', { key: 'label' }, [
-            h('div', { style: pageStyles.label }, text.tokens),
-            h('div', { style: pageStyles.hint }, text.tokensHint),
-          ]),
-          h('input', {
-            key: 'control',
-            type: 'number',
-            min: MIN_CONTEXT_TOKENS,
-            max: MAX_CONTEXT_TOKENS,
-            step: 100,
-            value: String(settings.contextTokens),
-            style: { ...pageStyles.input, width: 96 },
-            onChange: (event) => {
-              const next = Math.min(
-                MAX_CONTEXT_TOKENS,
-                Math.max(MIN_CONTEXT_TOKENS, Math.trunc(Number(event.target.value) || DEFAULT_CONTEXT_TOKENS)),
-              )
-              update({ contextTokens: next })
-            },
-          }),
         ]),
         h('div', { key: 'shortcut', style: pageStyles.row }, [
           h('div', { key: 'label' }, [

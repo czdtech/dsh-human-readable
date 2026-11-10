@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Human-Readable",
-    "description": "Rewrites your composer draft, using the conversation context, into language anyone can understand."
+    "description": "Rewrites your composer draft into a message that stands on its own, using the conversation context."
   }
 }

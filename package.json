@@ -3,7 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "给任何人讲清楚 — rewrite the composer draft into language anyone understands.",
+  "description": "给任何人讲清楚 — rewrite the composer draft into a stand-alone message anyone can follow.",
+  "scripts": {
+    "test": "node --test"
+  },
   "exports": {
     ".": "./host.js",
     "./client": "./client.js",
